@@ -138,6 +138,28 @@ other gameplay links are never sent to a translator or rewritten.
 2. In **Settings → OpenRouter**, enter your key and the desired model ID (e.g., `google/gemma-2-9b-it:free` or `qwen/qwen-2.5-72b-instruct`).
 3. In the main window, choose the **AI Engine** and select **OpenRouter (cloud)**.
 
+### Option 1b: Cloud AI (Opencode Go) — flat subscription, live model catalog
+
+OpenCode Go serves curated open models (DeepSeek, GLM, Kimi, MiMo, LongCat and others)
+for a flat monthly fee.
+
+1. Subscribe at opencode.ai/auth and copy your API key.
+2. Open **Settings → Opencode Go** and paste the key. Press **Refresh models** — the
+   dropdown is filled from the relay's own catalog; **Test connection** also proves the
+   key with one tiny request. Choose the model, save, then pick **Opencode Go** in the
+   main window.
+3. Pick the **Reasoning effort** level (`none … max`, default `medium`). Higher levels
+   think longer and spend more tokens.
+4. **API URL** can point at your own OpenAI-compatible gateway; MineAI normalises it to
+   the `/chat/completions` endpoint.
+
+Notes:
+- Models the relay serves over the Anthropic (`/messages`) or OpenAI (`/responses`) wire —
+  Qwen, MiniMax, GPT, Grok, Muse Spark — are hidden from the list, because translation
+  uses plain chat/completions. Tick **Show all models** to see the raw catalog.
+- The relay requires an `x-opencode-session` header; MineAI keeps one stable session id
+  per installation so the upstream prompt cache stays warm between runs.
+
 ### Option 2: Local AI (KoboldCPP)
 The program launches the `koboldcpp.exe` engine itself (just place it in the `AI` folder). You only need to download a language model in **`.gguf`** format.
 
@@ -298,6 +320,19 @@ SNBT/FTB Quests, цветовые коды, числа и пробелы вос�
 1. Получите API-ключ на сайте [openrouter.ai/keys](https://openrouter.ai/keys).
 2. В **Настройки → OpenRouter** укажите ваш ключ и ID модели (например, `google/gemma-2-9b-it:free` или `qwen/qwen-2.5-72b-instruct`).
 3. В главном окне выберите движок **Нейросеть (ИИ) → OpenRouter (облако)**.
+
+### Вариант 1б: Облачный ИИ (Opencode Go) — фиксированная подписка и живой каталог моделей
+
+OpenCode Go даёт доступ к отборным открытым моделям (DeepSeek, GLM, Kimi, MiMo, LongCat и другим) за фиксированную месячную плату.
+
+1. Оформите подписку на opencode.ai/auth и скопируйте API-ключ.
+2. Откройте **Настройки → Opencode Go** и вставьте ключ. Кнопка **«Обновить модели»** заполняет список из каталога relay, а **«Проверить подключение»** дополнительно проверяет ключ одним коротким запросом. Выберите модель, сохраните настройки и укажите **Opencode Go** в главном окне.
+3. Выберите **уровень мышления** (`none … max`, по умолчанию `medium`): чем выше уровень, тем дольше модель думает и тем больше расходует токенов.
+4. **API URL** можно направить на свой OpenAI-совместимый шлюз — MineAI нормализует адрес до эндпойнта `/chat/completions`.
+
+Примечания:
+- Модели, которые relay отдаёт по протоколу Anthropic (`/messages`) или OpenAI (`/responses`) — Qwen, MiniMax, GPT, Grok, Muse Spark — скрыты из списка, потому что перевод работает по обычному chat/completions. Галочка **«Показать все модели»** показывает сырой каталог.
+- Relay обязательно требует заголовок `x-opencode-session`; MineAI хранит один стабильный session id на установку, чтобы кэш промптов не остывал между запусками.
 
 ### Вариант 2: Локальный ИИ (KoboldCPP)
 Программа сама запускает движок `koboldcpp.exe` (просто положите его в папку `AI`). Вам нужно лишь скачать языковую модель формата **`.gguf`**.
