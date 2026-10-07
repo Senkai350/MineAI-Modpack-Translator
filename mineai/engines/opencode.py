@@ -212,6 +212,7 @@ class OpencodeGoEngine(BatchLlmEngine):
         self.session_id = (session_id or "").strip() or f"mineai-{uuid.uuid4().hex[:16]}"
         self.user_agent = (user_agent or "").strip() or OPENCODE_USER_AGENT
         self.session = session or requests.Session()
+        self._compat: dict[str, bool] = {}
         self._should_continue = None
         self._on_log = None
         super().__init__(
@@ -241,13 +242,34 @@ class OpencodeGoEngine(BatchLlmEngine):
         payload = {
             "model": self.model,
             "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.1,
+            "temperature": 1.0 if self._compat.get("temperature_one") else 0.1,
             "max_tokens": budget,
             "stream": False,
         }
-        if self.reasoning_effort and self.reasoning_effort != "auto":
+        if not self._compat.get("drop_thinking") and self.reasoning_effort and self.reasoning_effort != "auto":
             payload["reasoning_effort"] = self.reasoning_effort
         return payload
+
+    @staticmethod
+    def _compat_adaptation(exc: requests.HTTPError) -> str | None:
+        """Learn the per-model workaround for a 400 on the standard payload.
+
+        Some catalog models reject the request shape that fits the rest of the
+        catalog: ``kimi-k2.7-code`` answers ``invalid thinking: only type=enabled
+        is allowed`` for a plain ``reasoning_effort`` and ``invalid temperature:
+        only 1 is allowed`` for our low temperature.  Without this the whole
+        batch fails and every failing string is retried one by one, which looks
+        exactly like "translation is stuck".
+        """
+        response = exc.response
+        if response is None or response.status_code != 400:
+            return None
+        detail = (response.text or "").casefold()
+        if "invalid thinking" in detail:
+            return "drop_thinking"
+        if "invalid temperature" in detail:
+            return "temperature_one"
+        return None
 
     def _request(self, prompt: str, max_tokens: int, on_log=None) -> str | None:
         active_log = on_log or self._on_log
@@ -267,36 +289,56 @@ class OpencodeGoEngine(BatchLlmEngine):
                         pass
             return 5.0 * attempt
 
-        try:
-            response = request_with_retry(
-                lambda: self.session.post(
-                    self.api_url,
-                    headers=headers,
-                    json=self._payload(prompt, max_tokens),
-                    timeout=300,
-                ),
-                operation="Opencode Go",
-                on_log=active_log,
-                delay_func=opencode_delay,
-                should_continue=self._should_continue,
-            )
-        except RequestCancelled:
-            raise
-        except requests.HTTPError as exc:
-            status = exc.response.status_code if exc.response is not None else 0
-            detail = exc.response.text if exc.response is not None else ""
-            if status == 401:
-                message = "неверный или отозванный API-ключ"
-            elif status == 400 and "MissingSessionID" in detail:
-                message = "relay не принял x-opencode-session"
-            else:
-                message = f"HTTP {status}"
-            if active_log:
-                active_log(f"❌ Opencode Go: {message}", "red")
-            return None
-        except requests.RequestException as exc:
-            if active_log:
-                active_log(f"❌ Opencode Go сеть: {exc}", "red")
+        response = None
+        compat_round = 0
+        # Enough rounds for every payload adaptation we know how to apply — a model
+        # such as kimi-k2.7-code needs two of them (thinking and temperature).
+        while compat_round < 3:
+            compat_round += 1
+            try:
+                response = request_with_retry(
+                    lambda: self.session.post(
+                        self.api_url,
+                        headers=headers,
+                        json=self._payload(prompt, max_tokens),
+                        timeout=300,
+                    ),
+                    operation="Opencode Go",
+                    on_log=active_log,
+                    delay_func=opencode_delay,
+                    should_continue=self._should_continue,
+                )
+            except RequestCancelled:
+                raise
+            except requests.HTTPError as exc:
+                adaptation = self._compat_adaptation(exc)
+                if adaptation and not self._compat.get(adaptation):
+                    self._compat[adaptation] = True
+                    if active_log:
+                        active_log(
+                            f"🛠️ Opencode Go: {self.model} не принял стандартный запрос "
+                            f"({adaptation}) — повторяю с поправкой",
+                            "yellow",
+                        )
+                    continue
+                status = exc.response.status_code if exc.response is not None else 0
+                detail = exc.response.text if exc.response is not None else ""
+                if status == 401:
+                    message = "неверный или отозванный API-ключ"
+                elif status == 400 and "MissingSessionID" in detail:
+                    message = "relay не принял x-opencode-session"
+                else:
+                    message = f"HTTP {status}: {detail[:150]}"
+                if active_log:
+                    active_log(f"❌ Opencode Go: {message}", "red")
+                return None
+            except requests.RequestException as exc:
+                if active_log:
+                    active_log(f"❌ Opencode Go сеть: {exc}", "red")
+                return None
+            break
+
+        if response is None:
             return None
 
         try:

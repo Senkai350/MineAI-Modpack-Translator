@@ -34,6 +34,7 @@ class ConfigManager:
             "ai_retries": "3",
             "fallback_google": "False",
             "ai_batch": "20",
+            "ai_parallel": "0",
         },
         "API": {
             "deepl_key": "",

@@ -477,6 +477,7 @@ class TranslationJob:
                 google_mode=options.google_mode,
                 ai_mode=options.ai_mode,
                 ai_batch=options.ai_batch,
+                ai_parallel=self.config.getint("AI", "ai_parallel"),
                 ai_provider=options.ai_provider,
                 fallback_caches=(
                     [("Google-кэш", self.cache_std)]

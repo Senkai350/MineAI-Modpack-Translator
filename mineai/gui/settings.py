@@ -209,6 +209,25 @@ class SettingsWindow(ctk.CTkToplevel):
         self.slider_retries.set(retries_val)
         self.slider_retries.pack(fill="x", padx=12, pady=(5, 16))
 
+        parallel_val = config.getint("AI", "ai_parallel", 0)
+        self.lbl_parallel = ctk.CTkLabel(
+            tab_gen,
+            text=self._parallel_text(parallel_val),
+            anchor="w",
+            font=("Segoe UI", 12, "bold"),
+            text_color=UI.TEXT,
+        )
+        self.lbl_parallel.pack(fill="x", padx=12)
+        self.slider_parallel = ctk.CTkSlider(
+            tab_gen,
+            from_=0,
+            to=32,
+            number_of_steps=32,
+            command=lambda v: self.lbl_parallel.configure(text=self._parallel_text(int(v))),
+        )
+        self.slider_parallel.set(parallel_val)
+        self.slider_parallel.pack(fill="x", padx=12, pady=(5, 16))
+
         workers = config.getint("GENERAL", "google_workers", 5)
         self.lbl_workers = ctk.CTkLabel(
             tab_gen,
@@ -249,6 +268,12 @@ class SettingsWindow(ctk.CTkToplevel):
             hover_color=UI.SUCCESS_HOVER,
             command=self._save,
         ).pack(side="right", fill="x", expand=True, padx=(6, 0))
+
+    @staticmethod
+    def _parallel_text(value: int) -> str:
+        if value <= 0:
+            return "Одновременных запросов ИИ: авто (облако — 4, локально — 1)"
+        return f"Одновременных запросов ИИ: {value}"
 
     @staticmethod
     def _retry_text(value: int) -> str:
@@ -315,6 +340,7 @@ class SettingsWindow(ctk.CTkToplevel):
                 "model_path": self.ent_ai_mod.get(),
                 "gpu_layers": int(self.slider_gpu.get()),
                 "ai_retries": int(self.slider_retries.get()),
+                "ai_parallel": int(self.slider_parallel.get()),
             },
         )
         self.config.set_many(

@@ -1220,6 +1220,7 @@ class SettingsDialog(QDialog):
         smart_row.addStretch(1)
         general_layout.addLayout(smart_row)
         self.ai_retries = self._spin_row(general_layout, t("settings.ai_retries"), config.getint("AI", "ai_retries", 3), 0, 5)
+        self.ai_parallel = self._spin_row(general_layout, t("settings.ai_parallel"), config.getint("AI", "ai_parallel", 0), 0, 32)
         self.google_workers = self._spin_row(general_layout, t("settings.google_workers"), config.getint("GENERAL", "google_workers", 5), 1, 10)
         self.deepl_key = self._line_row(general_layout, t("settings.deepl"), config.get("API", "deepl_key"), secret=True)
         general_layout.addStretch(1)
@@ -1502,6 +1503,7 @@ class SettingsDialog(QDialog):
             "model_path": self.ai_model.text(),
             "gpu_layers": self.gpu_layers.value(),
             "ai_retries": self.ai_retries.value(),
+            "ai_parallel": self.ai_parallel.value(),
         })
         self.config.set_many("OPENROUTER", {
             "api_key": self.or_key.text(),

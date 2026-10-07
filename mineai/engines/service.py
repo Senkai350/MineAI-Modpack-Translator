@@ -1,6 +1,8 @@
 ﻿from collections import Counter
 from collections.abc import Callable
+import concurrent.futures
 import re
+import threading
 import requests
 from formatkit.contracts import ANCHOR_PATTERN
 from mineai.cache import TranslationCache
@@ -51,6 +53,16 @@ _PROMPT_LEAK_MARKERS = (
     "strict rules",
     "do not translate",
 )
+
+
+REMOTE_PROVIDERS = frozenset({"opencode", "openrouter"})
+# Measured on Opencode Go (one session id, 20 strings per request): 8 requests in
+# flight finish in the wall time of a single one, 48-64 give the best throughput
+# (~6.4 req/s) and a 128-request burst still returned 200 for every request — the
+# relay documents no RPM limit, it simply queues beyond ~96. The default stays at
+# 8 (7.2x measured on a real run); 32 is the largest useful value.
+DEFAULT_REMOTE_PARALLEL = 8
+MAX_PARALLEL_REQUESTS = 32
 
 
 def _source_fingerprint(text: str) -> str:
@@ -280,6 +292,7 @@ class TranslationService:
         google_mode: str = "single",
         ai_mode: str = "safe",
         ai_batch: int = 20,
+        ai_parallel: int = 0,
         ai_provider: str = "local",
         fallback_caches: list[tuple[str, TranslationCache]] | None = None,
         force_google_fallback: bool = False,
@@ -290,10 +303,41 @@ class TranslationService:
         self.google_mode = google_mode
         self.ai_mode = ai_mode
         self.ai_batch = ai_batch
+        self.ai_parallel = self._resolve_parallel(ai_parallel, ai_provider)
         self.ai_provider = ai_provider
         self.fallback_caches = list(fallback_caches or ())
         self.force_google_fallback = force_google_fallback
         self._ai_http_session = requests.Session() if engine_name == "ai" else None
+        self._thread_local = threading.local()
+
+    @staticmethod
+    def _resolve_parallel(requested: int, provider: str) -> int:
+        """How many translation requests may be in flight at once.
+
+        ``0`` means automatic.  A remote relay is pure model latency, so
+        overlapping requests multiplies throughput.  A local server (KoboldCPP,
+        LM Studio, Ollama, llama.cpp) owns one GPU and serialises the work
+        anyway, so overlapping only adds memory pressure and is left off.
+        """
+        try:
+            requested = int(requested)
+        except (TypeError, ValueError):
+            requested = 0
+        if requested > 0:
+            return min(requested, MAX_PARALLEL_REQUESTS)
+        if provider in REMOTE_PROVIDERS:
+            return DEFAULT_REMOTE_PARALLEL
+        return 1
+
+    def _session_for_thread(self):
+        """One pooled HTTP session per worker thread (``requests.Session`` is not thread-safe)."""
+        if self.engine_name != "ai":
+            return None
+        session = getattr(self._thread_local, "session", None)
+        if session is None:
+            session = requests.Session()
+            self._thread_local.session = session
+        return session
 
     def _build_engine(
         self, context: str = "", prompt_type: str = "mods"
@@ -377,6 +421,101 @@ class TranslationService:
             retries=retries,
             session=self._ai_http_session,
         )
+
+    def _translate_batches(
+        self,
+        batches: list[dict[str, EngineItem]],
+        engine: TranslationEngine,
+        target_lang: dict,
+        callbacks: EngineCallbacks,
+        *,
+        prompt_type: str,
+        context: str,
+    ):
+        """Yield ``(batch, translated)`` for every batch, optionally several at once.
+
+        Model latency dominates a run, so one request at a time leaves the
+        connection idle between answers.  Each worker gets its own engine (the
+        engines keep per-call state) and its own HTTP session, while this
+        generator hands results back to the caller one by one — so the cache and
+        the per-key bookkeeping stay exactly as deterministic as before.
+        """
+        total = len(batches)
+        workers = max(1, min(self.ai_parallel, total))
+        callbacks.on_log(
+            f"📦 Пачек: {total}"
+            + (f", одновременно: {workers}" if workers > 1 else ""),
+            "blue",
+        )
+
+        if workers == 1:
+            for batch in batches:
+                if not callbacks.should_run():
+                    return
+                callbacks.wait_if_paused()
+                if not callbacks.should_run():
+                    return
+                yield batch, engine.translate_batch(batch, target_lang, callbacks)
+            return
+
+        queue = iter(batches)
+        pending: dict[concurrent.futures.Future, dict[str, EngineItem]] = {}
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=workers, thread_name_prefix="mineai-ai"
+        ) as pool:
+            for _ in range(workers):
+                first = next(queue, None)
+                if first is None:
+                    break
+                pending[
+                    pool.submit(
+                        self._run_batch, first, target_lang, callbacks, prompt_type, context
+                    )
+                ] = first
+
+            while pending:
+                done, _running = concurrent.futures.wait(
+                    pending,
+                    return_when=concurrent.futures.FIRST_COMPLETED,
+                )
+                for future in done:
+                    batch = pending.pop(future)
+                    try:
+                        yield batch, future.result()
+                    except Exception:
+                        # The engines log their own errors and keep the source
+                        # text for a failed batch, exactly like a serial run.
+                        yield batch, {}
+                    if not callbacks.should_run():
+                        for leftover in pending:
+                            leftover.cancel()
+                        return
+                    following = next(queue, None)
+                    if following is not None:
+                        pending[
+                            pool.submit(
+                                self._run_batch,
+                                following,
+                                target_lang,
+                                callbacks,
+                                prompt_type,
+                                context,
+                            )
+                        ] = following
+
+    def _run_batch(
+        self,
+        batch: dict[str, EngineItem],
+        target_lang: dict,
+        callbacks: EngineCallbacks,
+        prompt_type: str,
+        context: str,
+    ) -> dict[str, str]:
+        """Translate one batch on a worker thread with its own engine and session."""
+        worker_engine = self._build_engine(context, prompt_type)
+        if getattr(worker_engine, "session", None) is not None:
+            worker_engine.session = self._session_for_thread()
+        return worker_engine.translate_batch(batch, target_lang, callbacks)
 
     def discard_cached_translation(
         self,
@@ -687,14 +826,14 @@ class TranslationService:
         if cur:
             batches.append(cur)
 
-        for idx, batch in enumerate(batches):
-            if not callbacks.should_run():
-                break
-            if len(batches) > 1:
-                callbacks.on_log(
-                    f"📦 Пачка {idx+1}/{len(batches)} ({len(batch)} строк)", "blue"
-                )
-            batch_result = engine.translate_batch(batch, target_lang, callbacks)
+        for batch, batch_result in self._translate_batches(
+            batches,
+            engine,
+            target_lang,
+            callbacks,
+            prompt_type=prompt_type,
+            context=context,
+        ):
             apply_engine_result(batch, batch_result, "основной движок")
 
         identity_failed = {
