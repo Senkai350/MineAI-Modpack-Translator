@@ -201,6 +201,7 @@ class TranslatorApp(ctk.CTk):
         ctk.CTkRadioButton(self.frame_ai, text="Ollama", variable=self.var_ai_provider, value="ollama", command=self._update_engine_ui).pack(anchor="w", pady=2)
         ctk.CTkRadioButton(self.frame_ai, text="Llama", variable=self.var_ai_provider, value="llama", command=self._update_engine_ui).pack(anchor="w", pady=2)
         ctk.CTkRadioButton(self.frame_ai, text="OpenRouter", variable=self.var_ai_provider, value="openrouter", command=self._update_engine_ui).pack(anchor="w", pady=2)
+        ctk.CTkRadioButton(self.frame_ai, text="Opencode Go", variable=self.var_ai_provider, value="opencode", command=self._update_engine_ui).pack(anchor="w", pady=2)
         ctk.CTkLabel(self.frame_ai, text="Режим", anchor="w", font=("Segoe UI", 10, "bold"), text_color=UI.MUTED).pack(fill="x", pady=(7, 2))
         ctk.CTkRadioButton(self.frame_ai, text="Стандартный", variable=self.var_ai_mode, value="safe").pack(anchor="w", pady=2)
         ctk.CTkRadioButton(self.frame_ai, text="Контекст + лор", variable=self.var_ai_mode, value="context").pack(anchor="w", pady=2)
@@ -427,6 +428,13 @@ class TranslatorApp(ctk.CTk):
                 if not model:
                     return False, "Не выбрана модель OpenRouter"
                 return True, f"OpenRouter · {model}"
+            if self.var_ai_provider.get() == "opencode":
+                if not settings.get("OPENCODE", "api_key").strip():
+                    return False, "Не указан ключ Opencode Go"
+                model = settings.get("OPENCODE", "model").strip()
+                if not model:
+                    return False, "Не выбрана модель Opencode Go"
+                return True, f"Opencode Go · {model}"
             if self.var_ai_provider.get() == "lmstudio":
                 base_url = settings.get("LMSTUDIO", "base_url").strip()
                 model = settings.get("LMSTUDIO", "model").strip()

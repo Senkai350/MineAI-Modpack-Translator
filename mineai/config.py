@@ -1,6 +1,12 @@
 ﻿import configparser
 import io
-from mineai.constants import SETTINGS_FILE
+from mineai.constants import (
+    DEFAULT_OPENCODE_GO_MODEL,
+    DEFAULT_OPENCODE_REASONING_EFFORT,
+    OPENCODE_GO_API,
+    OPENCODE_USER_AGENT,
+    SETTINGS_FILE,
+)
 from mineai.io_utils import atomic_write_text
 
 
@@ -53,6 +59,15 @@ class ConfigManager:
             "base_url": "http://127.0.0.1:8080/v1",
             "api_key": "",
             "model": "",
+        },
+        "OPENCODE": {
+            "api_url": OPENCODE_GO_API,
+            "api_key": "",
+            "model": DEFAULT_OPENCODE_GO_MODEL,
+            "reasoning_effort": DEFAULT_OPENCODE_REASONING_EFFORT,
+            "session_id": "",
+            "show_all_models": "False",
+            "user_agent": OPENCODE_USER_AGENT,
         },
     }
 

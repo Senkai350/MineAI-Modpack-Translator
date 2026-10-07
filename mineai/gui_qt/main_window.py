@@ -369,6 +369,7 @@ class TranslatorQtWindow(QMainWindow):
                 "Ollama",
                 "Llama",
                 "OpenRouter",
+                "Opencode Go",
             ]
         )
         self.engine_combo.currentTextChanged.connect(self._engine_changed)
@@ -787,12 +788,14 @@ class TranslatorQtWindow(QMainWindow):
             "ollama",
             "llama",
             "openrouter",
+            "opencode",
         }:
             stored_engine = {
                 "lmstudio": "LM Studio",
                 "ollama": "Ollama",
                 "llama": "Llama",
                 "openrouter": "OpenRouter",
+                "opencode": "Opencode Go",
             }[provider]
         engine_specs = {
             "Google": ("google", "local"),
@@ -802,6 +805,7 @@ class TranslatorQtWindow(QMainWindow):
             "Ollama": ("ai", "ollama"),
             "Llama": ("ai", "llama"),
             "OpenRouter": ("ai", "openrouter"),
+            "Opencode Go": ("ai", "opencode"),
         }
         wanted_spec = engine_specs.get(stored_engine, ("google", "local"))
         for index in range(self.engine_combo.count()):
@@ -846,6 +850,7 @@ class TranslatorQtWindow(QMainWindow):
             ("ai", "ollama"): "Ollama",
             ("ai", "llama"): "Llama",
             ("ai", "openrouter"): "OpenRouter",
+            ("ai", "opencode"): "Opencode Go",
         }
         settings.set(
             "GENERAL",

@@ -5,7 +5,7 @@ import requests
 from formatkit.contracts import ANCHOR_PATTERN
 from mineai.cache import TranslationCache
 from mineai.config import ConfigManager
-from mineai.constants import DEFAULT_OPENROUTER_MODEL
+from mineai.constants import DEFAULT_OPENCODE_GO_MODEL, DEFAULT_OPENROUTER_MODEL
 from mineai.engines.base import EngineCallbacks, EngineItem, TranslationEngine
 from mineai.engines.deepl import DeepLEngine
 from mineai.engines.google import GoogleEngine
@@ -13,6 +13,7 @@ from mineai.engines.kobold import KoboldEngine
 from mineai.engines.llama import LlamaEngine
 from mineai.engines.lmstudio import LmStudioEngine
 from mineai.engines.ollama import OllamaEngine
+from mineai.engines.opencode import OpencodeGoEngine, ensure_session_id
 from mineai.engines.openrouter import OpenRouterEngine
 from mineai.formats.rich_text import (
     contains_unsafe_formatting,
@@ -353,6 +354,21 @@ class TranslationService:
                 prompt_type=prompt_type,
                 retries=retries,
                 session=self._ai_http_session,
+            )
+        if self.ai_provider == "opencode":
+            return OpencodeGoEngine(
+                api_url=self.config.get("OPENCODE", "api_url"),
+                api_key=self.config.get("OPENCODE", "api_key"),
+                model=self.config.get("OPENCODE", "model")
+                or DEFAULT_OPENCODE_GO_MODEL,
+                mode=self.ai_mode,
+                context=context,
+                prompt_type=prompt_type,
+                reasoning_effort=self.config.get("OPENCODE", "reasoning_effort"),
+                session_id=ensure_session_id(self.config),
+                retries=retries,
+                session=self._ai_http_session,
+                user_agent=self.config.get("OPENCODE", "user_agent"),
             )
         return KoboldEngine(
             mode=self.ai_mode,

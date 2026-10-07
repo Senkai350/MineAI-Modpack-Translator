@@ -34,6 +34,7 @@ ENGINE_OPTIONS = {
     "Локальный ИИ": ("ai", "local"),
     "Local AI": ("ai", "local"),
     "OpenRouter": ("ai", "openrouter"),
+    "Opencode Go": ("ai", "opencode"),
     "LM Studio": ("ai", "lmstudio"),
     "Ollama": ("ai", "ollama"),
     "Llama": ("ai", "llama"),
@@ -137,6 +138,13 @@ def engine_readiness(config, engine_label: str) -> tuple[bool, str]:
         if not model:
             return False, tr("ready.openrouter_model")
         return True, f"OpenRouter · {model}"
+    if engine == "ai" and provider == "opencode":
+        if not config.get("OPENCODE", "api_key").strip():
+            return False, tr("ready.opencode_key")
+        model = config.get("OPENCODE", "model").strip()
+        if not model:
+            return False, tr("ready.opencode_model")
+        return True, f"Opencode Go · {model}"
     if engine == "ai" and provider == "lmstudio":
         if not config.get("LMSTUDIO", "base_url").strip():
             return False, tr("ready.lmstudio_url")

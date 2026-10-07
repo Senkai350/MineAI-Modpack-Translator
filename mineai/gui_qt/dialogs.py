@@ -45,8 +45,19 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from mineai.constants import DEFAULT_OPENROUTER_MODEL, LANGUAGES
+from mineai.constants import (
+    DEFAULT_OPENCODE_GO_MODEL,
+    DEFAULT_OPENCODE_REASONING_EFFORT,
+    DEFAULT_OPENROUTER_MODEL,
+    LANGUAGES,
+    OPENCODE_REASONING_EFFORTS,
+)
 from mineai.engines.llama import list_llama_models, normalize_llama_base_url
+from mineai.engines.opencode import (
+    is_chat_compatible,
+    normalize_opencode_api_url,
+    probe_opencode,
+)
 from mineai.engines.lmstudio import (
     list_loaded_lmstudio_models,
     normalize_lmstudio_base_url,
@@ -1004,12 +1015,14 @@ class SettingsDialog(QDialog):
         ollama_tab, ollama_layout = self._scroll_tab()
         llama_tab, llama_layout = self._scroll_tab()
         or_tab, or_layout = self._scroll_tab()
+        oc_tab, oc_layout = self._scroll_tab()
         general_tab, general_layout = self._scroll_tab()
         self.tabs.addTab(ai_tab, t("settings.tab.local"))
         self.tabs.addTab(lm_tab, t("settings.tab.lmstudio"))
         self.tabs.addTab(ollama_tab, t("settings.tab.ollama"))
         self.tabs.addTab(llama_tab, t("settings.tab.llama"))
         self.tabs.addTab(or_tab, t("settings.tab.openrouter"))
+        self.tabs.addTab(oc_tab, t("settings.tab.opencode"))
         self.tabs.addTab(general_tab, t("settings.tab.general"))
 
         self.ai_exe = self._file_row(ai_layout, t("settings.local_exe"), config.get("AI", "exe_path"), "Executables (*.exe)")
@@ -1141,6 +1154,63 @@ class SettingsDialog(QDialog):
         self.or_site = self._line_row(or_layout, t("settings.site_url"), config.get("OPENROUTER", "site_url"))
         self.or_app = self._line_row(or_layout, t("settings.app_title"), config.get("OPENROUTER", "app_name"))
         or_layout.addStretch(1)
+
+        oc_note = QLabel(t("settings.oc_note"))
+        oc_note.setObjectName("MutedLabel")
+        oc_note.setWordWrap(True)
+        oc_layout.addWidget(oc_note)
+        self.oc_url = self._line_row(
+            oc_layout,
+            t("settings.api_url"),
+            config.get("OPENCODE", "api_url"),
+        )
+        self.oc_key = self._line_row(
+            oc_layout,
+            t("settings.oc_key"),
+            config.get("OPENCODE", "api_key"),
+            secret=True,
+        )
+        oc_layout.addWidget(self._field_label(t("settings.model_id")))
+        self.oc_model = QComboBox()
+        self.oc_model.setEditable(True)
+        self.oc_model.setCurrentText(
+            config.get("OPENCODE", "model") or DEFAULT_OPENCODE_GO_MODEL
+        )
+        oc_layout.addWidget(self.oc_model)
+        self.oc_show_all = QCheckBox(t("settings.oc_show_all"))
+        self.oc_show_all.setChecked(config.getboolean("OPENCODE", "show_all_models"))
+        self.oc_show_all.toggled.connect(self._apply_opencode_filter)
+        oc_layout.addWidget(self.oc_show_all)
+        oc_layout.addWidget(self._field_label(t("settings.oc_effort")))
+        self.oc_effort = QComboBox()
+        self.oc_effort.addItems(list(OPENCODE_REASONING_EFFORTS))
+        self.oc_effort.setCurrentText(
+            config.get("OPENCODE", "reasoning_effort")
+            or DEFAULT_OPENCODE_REASONING_EFFORT
+        )
+        oc_layout.addWidget(self.oc_effort)
+        oc_effort_hint = QLabel(t("settings.oc_effort_hint"))
+        oc_effort_hint.setObjectName("MutedLabel")
+        oc_effort_hint.setWordWrap(True)
+        oc_layout.addWidget(oc_effort_hint)
+        oc_actions = QHBoxLayout()
+        self.oc_refresh = QPushButton(t("settings.oc_refresh"))
+        self.oc_test = QPushButton(t("settings.oc_test"))
+        oc_actions.addWidget(self.oc_refresh)
+        oc_actions.addWidget(self.oc_test)
+        oc_actions.addStretch(1)
+        oc_layout.addLayout(oc_actions)
+        self.oc_status = QLabel(t("settings.oc_idle"))
+        self.oc_status.setObjectName("MutedLabel")
+        self.oc_status.setWordWrap(True)
+        oc_layout.addWidget(self.oc_status)
+        oc_layout.addStretch(1)
+        self._opencode_catalog: list[str] = []
+        self._opencode_signals = ProviderSignals(self)
+        self._opencode_signals.finished.connect(self._opencode_probe_finished)
+        self._opencode_worker: threading.Thread | None = None
+        self.oc_refresh.clicked.connect(self._start_opencode_probe)
+        self.oc_test.clicked.connect(self._start_opencode_probe)
 
         smart_row = QHBoxLayout()
         self.smart_glue = QCheckBox(t("settings.smart_glue"))
@@ -1362,6 +1432,70 @@ class SettingsDialog(QDialog):
             else t("settings.llama_no_models")
         )
 
+    def _start_opencode_probe(self, *_args) -> None:
+        if self._opencode_worker and self._opencode_worker.is_alive():
+            return
+        self.oc_refresh.setEnabled(False)
+        self.oc_test.setEnabled(False)
+        self.oc_status.setText(t("settings.oc_checking"))
+        api_url = self.oc_url.text()
+        api_key = self.oc_key.text()
+        model = self.oc_model.currentText().strip()
+        effort = self.oc_effort.currentText()
+
+        def task() -> None:
+            try:
+                catalog = probe_opencode(
+                    api_url,
+                    api_key=api_key,
+                    model=model,
+                    reasoning_effort=effort,
+                )
+            except Exception as exc:
+                self._opencode_signals.finished.emit(False, [], str(exc))
+            else:
+                self._opencode_signals.finished.emit(True, catalog, "")
+
+        self._opencode_worker = threading.Thread(target=task, daemon=True)
+        self._opencode_worker.start()
+
+    def _opencode_visible_models(self) -> list[str]:
+        if self.oc_show_all.isChecked():
+            return list(self._opencode_catalog)
+        return [
+            model_id
+            for model_id in self._opencode_catalog
+            if is_chat_compatible(model_id)
+        ]
+
+    def _apply_opencode_filter(self, *_args) -> None:
+        """Re-filter the already fetched catalog; no extra network call."""
+        if not self._opencode_catalog:
+            return
+        self._set_provider_models(self.oc_model, self._opencode_visible_models())
+
+    def _opencode_probe_finished(
+        self,
+        success: bool,
+        models,
+        error: str,
+    ) -> None:
+        self._opencode_worker = None
+        self.oc_refresh.setEnabled(True)
+        self.oc_test.setEnabled(True)
+        if not success:
+            self.oc_status.setText(t("settings.oc_error", error=error))
+            return
+        self._opencode_catalog = [
+            str(model_id) for model_id in models if isinstance(model_id, str)
+        ]
+        visible = self._opencode_visible_models()
+        self._set_provider_models(self.oc_model, visible)
+        if visible:
+            self.oc_status.setText(t("settings.oc_models_found", count=len(visible)))
+        else:
+            self.oc_status.setText(t("settings.oc_no_models"))
+
     def _save(self) -> None:
         self.config.set_many("AI", {
             "exe_path": self.ai_exe.text(),
@@ -1375,6 +1509,13 @@ class SettingsDialog(QDialog):
             "model": self.or_model.text().strip(),
             "site_url": self.or_site.text().strip(),
             "app_name": self.or_app.text().strip(),
+        })
+        self.config.set_many("OPENCODE", {
+            "api_url": normalize_opencode_api_url(self.oc_url.text()),
+            "api_key": self.oc_key.text().strip(),
+            "model": self.oc_model.currentText().strip() or DEFAULT_OPENCODE_GO_MODEL,
+            "reasoning_effort": self.oc_effort.currentText(),
+            "show_all_models": self.oc_show_all.isChecked(),
         })
         self.config.set_many("LMSTUDIO", {
             "base_url": normalize_lmstudio_base_url(self.lm_url.text()),

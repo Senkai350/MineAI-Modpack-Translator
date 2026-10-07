@@ -10,6 +10,23 @@ LMSTUDIO_BASE_URL = "http://localhost:1234/v1"
 OLLAMA_BASE_URL = "http://localhost:11434/api"
 LLAMA_BASE_URL = "http://127.0.0.1:8080/v1"
 
+# --- Opencode Go (opencode.ai/zen/go) -----------------------------------
+OPENCODE_GO_BASE_URL = "https://opencode.ai/zen/go/v1"
+OPENCODE_GO_API = OPENCODE_GO_BASE_URL + "/chat/completions"
+OPENCODE_GO_MODELS_URL = OPENCODE_GO_BASE_URL + "/models"
+DEFAULT_OPENCODE_GO_MODEL = "deepseek-v4.1-flash"
+# Уровни мышления, которые принимает reasoning_effort (проверено на живом API).
+OPENCODE_REASONING_EFFORTS = ("none", "minimal", "low", "medium", "high", "max")
+DEFAULT_OPENCODE_REASONING_EFFORT = "medium"
+# Relay отдаёт не все модели по chat/completions: qwen*/minimax*/claude* живут на
+# /messages (Anthropic-wire), gpt-*/grok-*/muse-spark* — на /responses. Остальные
+# (DeepSeek, GLM, Kimi, MiMo, LongCat, Hy, Space Bunny) — обычный chat.
+OPENCODE_CHAT_UNSUPPORTED_PREFIXES = (
+    "qwen", "minimax", "claude", "gpt-", "grok-", "muse-spark", "omen-", "jev-",
+)
+# Relay требует осмысленный User-Agent и стабильный x-opencode-session на каждом запросе.
+OPENCODE_USER_AGENT = "MineAI-Translator/1.0"
+
 KEYS_TO_TRANSLATE = frozenset({
     "name", "title", "text", "description", "subtitle", "label", "hover_text", "link_text",
 })

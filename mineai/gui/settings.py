@@ -1,12 +1,24 @@
 ﻿import ctypes
+import queue
 import sys
+import threading
 
 import customtkinter as ctk
 from tkinter import filedialog, messagebox
 
 from mineai.config import ConfigManager
-from mineai.constants import DEFAULT_OPENROUTER_MODEL
+from mineai.constants import (
+    DEFAULT_OPENCODE_GO_MODEL,
+    DEFAULT_OPENCODE_REASONING_EFFORT,
+    DEFAULT_OPENROUTER_MODEL,
+    OPENCODE_REASONING_EFFORTS,
+)
 from mineai.engines.llm_common import get_default_prompts, load_prompts, save_prompts
+from mineai.engines.opencode import (
+    is_chat_compatible,
+    normalize_opencode_api_url,
+    probe_opencode,
+)
 from mineai.gui.style import UI
 
 
@@ -29,6 +41,7 @@ class SettingsWindow(ctk.CTkToplevel):
         tab_ollama = self._scroll_tab(tabs, "Ollama")
         tab_llama = self._scroll_tab(tabs, "Llama")
         tab_or = self._scroll_tab(tabs, "OpenRouter")
+        tab_oc = self._scroll_tab(tabs, "Opencode Go")
         tab_gen = self._scroll_tab(tabs, "Общие и API")
 
         self._field_label(tab_ai, "Исполняемый файл KoboldCPP (.exe)")
@@ -108,6 +121,67 @@ class SettingsWindow(ctk.CTkToplevel):
         self.ent_or_site = self._plain_entry(tab_or, config.get("OPENROUTER", "site_url"))
         self._field_label(tab_or, "Название приложения (X-Title)")
         self.ent_or_app = self._plain_entry(tab_or, config.get("OPENROUTER", "app_name"))
+
+        ctk.CTkLabel(
+            tab_oc,
+            text="Ключ создаётся на opencode.ai/auth (подписка Go / Go Plus). Каталог моделей подтягивается из API relay; модели, которые relay отдаёт не по chat-протоколу, скрыты.",
+            anchor="w",
+            justify="left",
+            wraplength=570,
+            font=("Segoe UI", 10),
+            text_color=UI.MUTED,
+        ).pack(fill="x", padx=12, pady=(10, 4))
+
+        self._field_label(tab_oc, "API URL")
+        self.ent_oc_url = self._plain_entry(tab_oc, config.get("OPENCODE", "api_url"))
+        self._field_label(tab_oc, "API ключ Opencode Go")
+        self.ent_oc_key = self._plain_entry(tab_oc, config.get("OPENCODE", "api_key"), show="*")
+        self._field_label(tab_oc, "ID модели (список тянется из API)")
+        self.cmb_oc_model = ctk.CTkComboBox(
+            tab_oc,
+            values=[config.get("OPENCODE", "model") or DEFAULT_OPENCODE_GO_MODEL],
+        )
+        self.cmb_oc_model.set(config.get("OPENCODE", "model") or DEFAULT_OPENCODE_GO_MODEL)
+        self.cmb_oc_model.pack(fill="x", padx=12, pady=(2, 6))
+
+        self.var_oc_all = ctk.BooleanVar(value=config.getboolean("OPENCODE", "show_all_models"))
+        ctk.CTkCheckBox(
+            tab_oc,
+            text="Показать все модели (часть идёт не по chat-протоколу)",
+            variable=self.var_oc_all,
+            command=self._apply_oc_filter,
+            font=("Segoe UI", 11),
+        ).pack(anchor="w", padx=12, pady=(0, 6))
+
+        self._field_label(tab_oc, "Уровень мышления (reasoning_effort)")
+        self.cmb_oc_effort = ctk.CTkOptionMenu(tab_oc, values=list(OPENCODE_REASONING_EFFORTS))
+        self.cmb_oc_effort.set(
+            config.get("OPENCODE", "reasoning_effort") or DEFAULT_OPENCODE_REASONING_EFFORT
+        )
+        self.cmb_oc_effort.pack(fill="x", padx=12, pady=(2, 10))
+
+        oc_actions = ctk.CTkFrame(tab_oc, fg_color="transparent")
+        oc_actions.pack(fill="x", padx=12)
+        ctk.CTkButton(
+            oc_actions, text="Обновить модели", width=150, command=self._refresh_oc_models
+        ).pack(side="left")
+        ctk.CTkButton(
+            oc_actions, text="Проверить подключение", width=180, command=self._refresh_oc_models
+        ).pack(side="left", padx=6)
+        self.lbl_oc_status = ctk.CTkLabel(
+            tab_oc,
+            text="Каталог моделей ещё не запрошен",
+            anchor="w",
+            justify="left",
+            wraplength=570,
+            font=("Segoe UI", 10),
+            text_color=UI.MUTED,
+        )
+        self.lbl_oc_status.pack(fill="x", padx=12, pady=(8, 10))
+
+        self._oc_queue: queue.Queue = queue.Queue()
+        self._oc_catalog: list[str] = []
+        self.after(150, self._drain_oc_queue)
 
         self.var_smart = ctk.BooleanVar(value=config.getboolean("GENERAL", "smart_glue"))
         ctk.CTkSwitch(
@@ -254,6 +328,16 @@ class SettingsWindow(ctk.CTkToplevel):
             },
         )
         self.config.set_many(
+            "OPENCODE",
+            {
+                "api_url": normalize_opencode_api_url(self.ent_oc_url.get()),
+                "api_key": self.ent_oc_key.get().strip(),
+                "model": self.cmb_oc_model.get().strip() or DEFAULT_OPENCODE_GO_MODEL,
+                "reasoning_effort": self.cmb_oc_effort.get(),
+                "show_all_models": self.var_oc_all.get(),
+            },
+        )
+        self.config.set_many(
             "LMSTUDIO",
             {
                 "base_url": self.ent_lm_url.get().strip(),
@@ -287,6 +371,86 @@ class SettingsWindow(ctk.CTkToplevel):
         self.config.set_many("API", {"deepl_key": self.ent_deepl.get()})
         self.on_saved()
         self.destroy()
+
+
+    # ---------------- Opencode Go ----------------
+
+    def _oc_visible_models(self) -> list[str]:
+        if self.var_oc_all.get():
+            return list(self._oc_catalog)
+        return [
+            model_id
+            for model_id in self._oc_catalog
+            if is_chat_compatible(model_id)
+        ]
+
+    def _apply_oc_filter(self) -> None:
+        if not self._oc_catalog:
+            return
+        values = self._oc_visible_models()
+        current = self.cmb_oc_model.get().strip()
+        if current and current not in values:
+            values.insert(0, current)
+        self.cmb_oc_model.configure(
+            values=values or [current or DEFAULT_OPENCODE_GO_MODEL]
+        )
+        self.cmb_oc_model.set(current or DEFAULT_OPENCODE_GO_MODEL)
+
+    def _refresh_oc_models(self) -> None:
+        self.lbl_oc_status.configure(
+            text="Запрашиваю каталог Opencode Go…", text_color=UI.MUTED
+        )
+        api_url = self.ent_oc_url.get()
+        api_key = self.ent_oc_key.get()
+        model = self.cmb_oc_model.get()
+        effort = self.cmb_oc_effort.get()
+
+        def worker() -> None:
+            try:
+                catalog = probe_opencode(
+                    api_url,
+                    api_key=api_key,
+                    model=model,
+                    reasoning_effort=effort,
+                )
+            except Exception as exc:
+                self._oc_queue.put(("error", str(exc)))
+            else:
+                self._oc_queue.put(("models", catalog))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _drain_oc_queue(self) -> None:
+        """Main-thread poller — Tk widgets are only touched from the main thread."""
+        try:
+            while True:
+                kind, payload = self._oc_queue.get_nowait()
+                if kind == "models":
+                    self._oc_catalog = [str(item) for item in payload]
+                    self._apply_oc_filter()
+                    shown = len(self._oc_visible_models())
+                    if shown:
+                        self.lbl_oc_status.configure(
+                            text=f"Подключение успешно · доступно моделей: {shown}",
+                            text_color=UI.SUCCESS,
+                        )
+                    else:
+                        self.lbl_oc_status.configure(
+                            text="Relay доступен, но chat-совместимых моделей не найдено",
+                            text_color=UI.MUTED,
+                        )
+                else:
+                    self.lbl_oc_status.configure(
+                        text=f"Ошибка подключения: {payload}",
+                        text_color=UI.DANGER,
+                    )
+        except queue.Empty:
+            pass
+        try:
+            if self.winfo_exists():
+                self.after(150, self._drain_oc_queue)
+        except Exception:
+            return
 
 
 class PromptEditorWindow(ctk.CTkToplevel):
