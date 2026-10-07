@@ -1,0 +1,52 @@
+name: Build Windows EXE (Beta)
+
+# Сборка MineAI_Translator_Beta45.exe на windows-раннере — те же шаги, что и в
+# build.bat: зависимости → проверка синтаксиса → PyInstaller по spec-файлу.
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip -q
+          python -m pip install -r requirements-qt.txt pyinstaller -q
+
+      - name: Check syntax (same paths as build.bat)
+        run: python -m compileall mineai/ formatkit/ translator.py -q
+
+      - name: Build EXE
+        run: python -m PyInstaller --noconfirm --clean MineAI_Translator_Beta45.spec
+
+      - name: Verify artifact exists
+        run: |
+          if (-not (Test-Path "dist\MineAI_Translator_Beta45.exe")) { throw "EXE was not produced" }
+          "Size: {0:N1} MB" -f ((Get-Item "dist\MineAI_Translator_Beta45.exe").Length / 1MB)
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MineAI_Translator_Beta45-windows
+          path: dist/MineAI_Translator_Beta45.exe
+          if-no-files-found: error
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/MineAI_Translator_Beta45.exe
