@@ -28,7 +28,7 @@ jobs:
           python -m pip install -r requirements-qt.txt pyinstaller -q
 
       - name: Check syntax (same paths as build.bat)
-        run: python -m compileall mineai/ formatkit/ translator.py -q
+        run: python -m compileall mineai/ formatkit/ mineai_formatkit/ translator.py -q
 
       - name: Build EXE
         run: python -m PyInstaller --noconfirm --clean MineAI_Translator_Beta45.spec
