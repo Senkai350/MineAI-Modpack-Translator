@@ -7,9 +7,29 @@ KOBOLD_MODELS_URL = "http://localhost:5001/v1/models"
 OPENROUTER_API = "https://openrouter.ai/api/v1/chat/completions"
 DEFAULT_OPENROUTER_MODEL = "google/gemma-2-9b-it:free"
 
+# --- Opencode Go (opencode.ai/zen/go) -----------------------------------
+OPENCODE_GO_BASE_URL = "https://opencode.ai/zen/go/v1"
+OPENCODE_GO_API = OPENCODE_GO_BASE_URL + "/chat/completions"
+OPENCODE_GO_MODELS_URL = OPENCODE_GO_BASE_URL + "/models"
+DEFAULT_OPENCODE_GO_MODEL = "deepseek-v4.1-flash"
+# Уровни мышления, которые реально принимает reasoning_effort (проверено на живом API).
+OPENCODE_REASONING_EFFORTS = ("none", "minimal", "low", "medium", "high", "max")
+DEFAULT_OPENCODE_REASONING_EFFORT = "medium"
+# Opencode Go отдаёт не все модели по chat/completions: qwen*/minimax*/claude*
+# живут на /messages (Anthropic-wire), gpt-*/grok-*/muse-spark* — на /responses.
+# Всё остальное (DeepSeek, GLM, Kimi, MiMo, LongCat, Hy, Space Bunny) — обычный chat.
+OPENCODE_CHAT_UNSUPPORTED_PREFIXES = (
+    "qwen", "minimax", "claude", "gpt-", "grok-", "muse-spark", "omen-", "jev-",
+)
+# Relay требует осмысленный User-Agent и стабильный x-opencode-session на каждом запросе.
+OPENCODE_USER_AGENT = "MineAI-Translator/1.0"
+# reasoning-токены списываются из того же бюджета, что и ответ, поэтому запас шире.
+OPENCODE_MAX_TOKENS_MULTIPLIER = 3
+
 AI_PROVIDERS = {
     "local": "Локально (KoboldCPP)",
     "openrouter": "OpenRouter (облако)",
+    "opencode": "Opencode Go (облако)",
 }
 
 KEYS_TO_TRANSLATE = frozenset({

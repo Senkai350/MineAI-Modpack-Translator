@@ -1,10 +1,13 @@
+import uuid
+
 from mineai.cache import TranslationCache
 from mineai.config import ConfigManager
 from mineai.engines.base import EngineCallbacks, EngineItem, TranslationEngine
 from mineai.engines.deepl import DeepLEngine
 from mineai.engines.google import GoogleEngine
-from mineai.constants import DEFAULT_OPENROUTER_MODEL
+from mineai.constants import DEFAULT_OPENCODE_GO_MODEL, DEFAULT_OPENROUTER_MODEL
 from mineai.engines.kobold import KoboldEngine
+from mineai.engines.opencode import OpencodeGoEngine
 from mineai.engines.openrouter import OpenRouterEngine
 from mineai.text_processing import apply_smart_glue, mask_protected_fragments
 
@@ -47,7 +50,27 @@ class TranslationService:
                 site_url=self.config.get("OPENROUTER", "site_url"),
                 app_name=self.config.get("OPENROUTER", "app_name"),
             )
+        if self.ai_provider == "opencode":
+            return OpencodeGoEngine(
+                api_key=self.config.get("OPENCODE", "api_key"),
+                model=self.config.get("OPENCODE", "model") or DEFAULT_OPENCODE_GO_MODEL,
+                api_url=self.config.get("OPENCODE", "api_url"),
+                mode=self.ai_mode,
+                context=context,
+                reasoning_effort=self.config.get("OPENCODE", "reasoning_effort"),
+                session_id=self._opencode_session_id(),
+                request_delay=self.config.getfloat("OPENCODE", "request_delay", 1.0),
+                user_agent=self.config.get("OPENCODE", "user_agent"),
+            )
         return KoboldEngine(mode=self.ai_mode, context=context)
+
+    def _opencode_session_id(self) -> str:
+        """Stable per-install session key — keeps the relay's prompt cache warm between runs."""
+        session_id = self.config.get("OPENCODE", "session_id").strip()
+        if not session_id:
+            session_id = f"mineai-{uuid.uuid4().hex[:16]}"
+            self.config.set("OPENCODE", "session_id", session_id)
+        return session_id
 
     def translate_dict(
         self,

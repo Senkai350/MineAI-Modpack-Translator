@@ -1,7 +1,13 @@
 import configparser
 import os
 
-from mineai.constants import SETTINGS_FILE
+from mineai.constants import (
+    DEFAULT_OPENCODE_GO_MODEL,
+    DEFAULT_OPENCODE_REASONING_EFFORT,
+    OPENCODE_GO_API,
+    OPENCODE_USER_AGENT,
+    SETTINGS_FILE,
+)
 
 
 class ConfigManager:
@@ -30,6 +36,16 @@ class ConfigManager:
             "model": "google/gemma-2-9b-it:free",
             "site_url": "",
             "app_name": "MineAI Translator",
+        },
+        "OPENCODE": {
+            "api_url": OPENCODE_GO_API,
+            "api_key": "",
+            "model": DEFAULT_OPENCODE_GO_MODEL,
+            "reasoning_effort": DEFAULT_OPENCODE_REASONING_EFFORT,
+            "session_id": "",
+            "request_delay": "1",
+            "show_all_models": "False",
+            "user_agent": OPENCODE_USER_AGENT,
         },
     }
 
@@ -68,6 +84,13 @@ class ConfigManager:
     def getint(self, section: str, key: str, fallback: int = 0) -> int:
         raw = self.get(section, key)
         return int(raw) if raw.isdigit() else fallback
+
+    def getfloat(self, section: str, key: str, fallback: float = 0.0) -> float:
+        raw = self.get(section, key)
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            return fallback
 
 
 # Shared singleton for GUI and jobs

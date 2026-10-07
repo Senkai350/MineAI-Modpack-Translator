@@ -108,6 +108,13 @@ class TranslationJob:
                 if not self.config.get("OPENROUTER", "model").strip():
                     self.on_log("❌ Укажите ID модели OpenRouter в настройках!", "red")
                     return
+            elif options.ai_provider == "opencode":
+                if not self.config.get("OPENCODE", "api_key").strip():
+                    self.on_log("❌ Укажите API-ключ Opencode Go в настройках!", "red")
+                    return
+                if not self.config.get("OPENCODE", "model").strip():
+                    self.on_log("❌ Выберите модель Opencode Go в настройках!", "red")
+                    return
             elif not self.config.get("AI", "model_path").strip():
                 self.on_log("❌ Выберите модель .gguf в настройках!", "red")
                 return
@@ -145,6 +152,10 @@ class TranslationJob:
         elif options.engine == "ai" and options.ai_provider == "openrouter":
             model = self.config.get("OPENROUTER", "model")
             self.on_log(f"🌐 OpenRouter: {model}", "cyan")
+        elif options.engine == "ai" and options.ai_provider == "opencode":
+            model = self.config.get("OPENCODE", "model")
+            effort = self.config.get("OPENCODE", "reasoning_effort")
+            self.on_log(f"🌐 Opencode Go: {model} (мышление: {effort})", "cyan")
 
         pack_writer: PackWriter | None = None
         if options.output_mode == "resourcepack":
