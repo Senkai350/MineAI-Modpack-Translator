@@ -73,6 +73,14 @@ class StringEstimator:
         mc_dir: str | None = None,
     ) -> int:
         total = 0
+        # Per-file estimates so the runner can keep the progress denominator
+        # honest: it re-anchors "total" to done + estimate-of-what-is-left.
+        self.breakdown: dict[str, int] = {}
+
+        def record(path: str, count: int) -> int:
+            self.breakdown[path] = self.breakdown.get(path, 0) + int(count or 0)
+            return count
+
         target_file = f"{target_lang['file']}.json"
         target_regex = target_lang["regex"]
 
@@ -94,26 +102,32 @@ class StringEstimator:
                 path,
                 "books",
             )
-            total += self._estimate_jar(
+            total += record(
                 path,
-                target_file,
-                target_lang,
-                mode,
-                selected_mods,
-                selected_books,
-                smart_glue,
-                book_locator,
+                self._estimate_jar(
+                    path,
+                    target_file,
+                    target_lang,
+                    mode,
+                    selected_mods,
+                    selected_books,
+                    smart_glue,
+                    book_locator,
+                ),
             )
 
         for path in loose_files:
             if not self.state.should_run():
                 return total
             self.state.wait_if_paused()
-            total += self._estimate_loose(
+            total += record(
                 path,
-                target_file,
-                mode,
-                target_regex,
+                self._estimate_loose(
+                    path,
+                    target_file,
+                    mode,
+                    target_regex,
+                ),
             )
 
         if translate_quests:
@@ -137,40 +151,49 @@ class StringEstimator:
                     len(pending),
                 ):
                     continue
-                total += len(pending)
+                total += record(dependency.source_path, len(pending))
 
             for path in snbt_files:
                 if not self.state.should_run():
                     return total
                 self.state.wait_if_paused()
-                total += self._estimate_snbt(
+                total += record(
                     path,
-                    mode,
-                    target_regex,
-                    target_lang["file"],
-                    selected_items,
-                    target_lang,
+                    self._estimate_snbt(
+                        path,
+                        mode,
+                        target_regex,
+                        target_lang["file"],
+                        selected_items,
+                        target_lang,
+                    ),
                 )
 
             for path in bq_files:
                 if not self.state.should_run():
                     return total
                 self.state.wait_if_paused()
-                total += self._estimate_bq(
+                total += record(
                     path,
-                    mode,
-                    target_regex,
-                    target_lang,
+                    self._estimate_bq(
+                        path,
+                        mode,
+                        target_regex,
+                        target_lang,
+                    ),
                 )
 
             for path in heracles_files or []:
                 if not self.state.should_run():
                     return total
                 self.state.wait_if_paused()
-                total += self._estimate_heracles(
+                total += record(
                     path,
-                    mode,
-                    target_lang,
+                    self._estimate_heracles(
+                        path,
+                        mode,
+                        target_lang,
+                    ),
                 )
 
             for path in puffish_files or []:
@@ -194,7 +217,7 @@ class StringEstimator:
                     pending,
                 ):
                     continue
-                total += pending
+                total += record(path, pending)
 
         return total
 

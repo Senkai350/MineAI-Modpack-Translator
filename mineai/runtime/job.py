@@ -437,8 +437,49 @@ class TranslationJob:
         )
         done = 0
 
+        # The pre-run estimate is only a plan: the runner bumps progress for
+        # every value it hands to the engine (technical/protected ones and
+        # repeated occurrences included), so the estimate can be reached while
+        # files are still being processed — the bar then reads 100% and the ETA
+        # says "finishing" for minutes.  Re-anchor the denominator to
+        # "done + estimate of what is left" before every file instead.
+        breakdown = getattr(estimator, "breakdown", {})
+        plan_paths: list[str] = []
+        plan_counts: list[int] = []
+        for path, _translate_mods, _translate_books in jar_work:
+            plan_paths.append(path)
+            plan_counts.append(breakdown.get(path, 0))
+        for path in loose:
+            plan_paths.append(path)
+            plan_counts.append(breakdown.get(path, 0))
+        for dependency in quest_locale_dependencies:
+            plan_paths.append(dependency.source_path)
+            plan_counts.append(breakdown.get(dependency.source_path, 0))
+        for path in (*snbt, *bq_files, *heracles_files, *puffish_files):
+            plan_paths.append(path)
+            plan_counts.append(breakdown.get(path, 0))
+        plan_suffix = [0] * (len(plan_counts) + 1)
+        for plan_index in range(len(plan_counts) - 1, -1, -1):
+            plan_suffix[plan_index] = plan_suffix[plan_index + 1] + plan_counts[plan_index]
+        plan_cursor = 0
+
+        def match_plan(path: str) -> int | None:
+            """Index of this file in the plan (and move the cursor past it)."""
+            nonlocal plan_cursor
+            while plan_cursor < len(plan_paths) and plan_paths[plan_cursor] != path:
+                plan_cursor += 1
+            if plan_cursor >= len(plan_paths):
+                return None
+            position = plan_cursor
+            plan_cursor += 1
+            return position
+
         def process_file(path: str, file_type: str, action) -> None:
             nonlocal done, failed_files
+            plan_position = match_plan(path)
+            if plan_position is not None:
+                # this file plus everything after it
+                self.state.reanchor_total(plan_suffix[plan_position])
             try:
                 changed_path = action()
                 if isinstance(changed_path, str) and changed_path not in modified_paths:
@@ -451,6 +492,10 @@ class TranslationJob:
                 )
             finally:
                 done += 1
+                if plan_position is not None:
+                    # only what is left after this file, so the status emitted
+                    # below cannot claim 100% while other files are still queued
+                    self.state.reanchor_total(plan_suffix[plan_position + 1])
                 self.state.update_file_progress(file_type, done, total_items)
                 self.on_status(
                     self.state.get_full_status(),

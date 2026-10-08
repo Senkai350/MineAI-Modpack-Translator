@@ -135,6 +135,20 @@ class JobState:
         with self._lock:
             self.total_strings = max(0, total)
 
+    def reanchor_total(self, remaining: int) -> None:
+        """Keep the denominator honest while the run is going.
+
+        The pre-run estimate counts a different set than the progress counter:
+        it skips technical and protected values itself and counts distinct keys,
+        while the runner bumps every value it hands over (including repeats and
+        protected ones).  The estimate can therefore be reached long before the
+        work is done, which made the bar read 100% while files were still being
+        processed.  Anchoring the total to ``done + what is estimated to be
+        left`` keeps both the bar and the ETA truthful.
+        """
+        with self._lock:
+            self.total_strings = self.translated_strings + max(0, int(remaining))
+
     def begin_progress(self) -> None:
         with self._lock:
             self.start_time = time.time()
