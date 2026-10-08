@@ -228,6 +228,11 @@ class SettingsWindow(ctk.CTkToplevel):
         self.slider_parallel.set(parallel_val)
         self.slider_parallel.pack(fill="x", padx=12, pady=(5, 16))
 
+        self._field_label(tab_gen, "Бюджет ответа ИИ, токенов (0 = авто)")
+        self.ent_max_tokens = self._plain_entry(
+            tab_gen, str(config.getint("AI", "max_tokens", 0))
+        )
+
         workers = config.getint("GENERAL", "google_workers", 5)
         self.lbl_workers = ctk.CTkLabel(
             tab_gen,
@@ -291,6 +296,14 @@ class SettingsWindow(ctk.CTkToplevel):
         return frame
 
     @staticmethod
+    def _int_or_zero(value: str) -> int:
+        """0 for an empty or malformed budget field, never an exception."""
+        try:
+            return max(0, int(str(value).strip() or 0))
+        except (TypeError, ValueError):
+            return 0
+
+    @staticmethod
     def _field_label(parent, text: str) -> None:
         ctk.CTkLabel(
             parent,
@@ -341,6 +354,7 @@ class SettingsWindow(ctk.CTkToplevel):
                 "gpu_layers": int(self.slider_gpu.get()),
                 "ai_retries": int(self.slider_retries.get()),
                 "ai_parallel": int(self.slider_parallel.get()),
+                "max_tokens": self._int_or_zero(self.ent_max_tokens.get()),
             },
         )
         self.config.set_many(

@@ -33,9 +33,15 @@ from mineai.engines.llm_common import BatchLlmEngine
 
 logger = logging.getLogger(__name__)
 
-# "Thinking" models spend the same token budget on reasoning as on the answer, so
-# a batch that fits in 4k normally would be truncated mid-JSON at effort >= low.
-REASONING_TOKEN_HEADROOM = 2
+# "Thinking" models spend the token budget on reasoning before they emit the
+# answer, so a batch that fits in 4k normally is truncated mid-JSON at effort
+# >= low.  Measured on deepseek-v4.1-flash: a 15-line batch of quest strings
+# burned 7215 of 8192 tokens on reasoning — hence 4x, not 2x.
+REASONING_TOKEN_HEADROOM = 4
+# Ceiling for the automatic budget growth (and the default cap for a manual one).
+MAX_OUTPUT_TOKENS = 32768
+# How far the budget may grow when the model hits the limit before answering.
+MAX_BUDGET_MULTIPLIER = 8
 PROBE_MAX_TOKENS = 8
 
 
@@ -204,6 +210,7 @@ class OpencodeGoEngine(BatchLlmEngine):
         retries: int = 3,
         session=None,
         user_agent: str = OPENCODE_USER_AGENT,
+        max_tokens: int = 0,
     ) -> None:
         self.api_url = normalize_opencode_api_url(api_url)
         self.api_key = (api_key or "").strip()
@@ -212,6 +219,13 @@ class OpencodeGoEngine(BatchLlmEngine):
         self.session_id = (session_id or "").strip() or f"mineai-{uuid.uuid4().hex[:16]}"
         self.user_agent = (user_agent or "").strip() or OPENCODE_USER_AGENT
         self.session = session or requests.Session()
+        # 0 = pick a budget automatically; anything else is the user's answer cap
+        # for one request (the reasoning headroom below still applies on top).
+        try:
+            self.max_tokens_override = max(0, int(max_tokens or 0))
+        except (TypeError, ValueError):
+            self.max_tokens_override = 0
+        self._budget_multiplier = 1
         self._compat: dict[str, bool] = {}
         self._should_continue = None
         self._on_log = None
@@ -235,10 +249,23 @@ class OpencodeGoEngine(BatchLlmEngine):
             self._should_continue = None
             self._on_log = None
 
-    def _payload(self, prompt: str, max_tokens: int) -> dict:
-        budget = max(1, int(max_tokens))
+    def _budget(self, max_tokens: int) -> int:
+        """Token cap for one request: the manual value or the automatic one.
+
+        A model may reason even when the effort says "none" (measured on
+        deepseek-v4.1-flash), so once a reply proves it thinks, the reasoning
+        headroom is applied to every later request as well.
+        """
+        base = self.max_tokens_override or max(1, int(max_tokens))
         if self.reasoning_effort and self.reasoning_effort != "none":
-            budget *= REASONING_TOKEN_HEADROOM
+            base *= REASONING_TOKEN_HEADROOM
+        elif self._compat.get("reasoning_model"):
+            base *= REASONING_TOKEN_HEADROOM
+        ceiling = max(MAX_OUTPUT_TOKENS, self.max_tokens_override)
+        return max(1, min(base * self._budget_multiplier, ceiling))
+
+    def _payload(self, prompt: str, max_tokens: int) -> dict:
+        budget = self._budget(max_tokens)
         payload = {
             "model": self.model,
             "messages": [{"role": "user", "content": prompt}],
@@ -352,6 +379,31 @@ class OpencodeGoEngine(BatchLlmEngine):
                 active_log(f"❌ Opencode Go: неверный JSON ответа: {exc}", "red")
             return None
 
+        # Remember that this model thinks: the headroom then applies to every
+        # later request, even when the effort is "none".
+        message = choice.get("message") or {}
+        usage = payload.get("usage") or {}
+        details = usage.get("completion_tokens_details") or {}
+        if (details.get("reasoning_tokens") or 0) > 0 or message.get("reasoning_content"):
+            self._compat["reasoning_model"] = True
+
+        if isinstance(content, str) and content.strip():
+            return content.strip()
+
+        # Empty answer. When the model spent the whole budget on reasoning, raise
+        # the budget and repeat the same batch: the reasoning trace is what
+        # overflowed, so one larger call costs less than fragmenting the batch.
+        if finish_reason == "length" and self._budget_multiplier < MAX_BUDGET_MULTIPLIER:
+            self._budget_multiplier *= 2
+            if active_log:
+                active_log(
+                    f"📈 Opencode Go: {self.model} израсходовал лимит на размышление "
+                    f"({details.get('reasoning_tokens') or '?'} токенов) — поднимаю бюджет "
+                    f"до {self._budget(max_tokens)} и повторяю пачку целиком",
+                    "yellow",
+                )
+            return self._request(prompt, max_tokens, on_log)
+
         if content is None:
             # Reasoning models return content=null when the budget ran out on
             # thinking; the batch is retried in smaller pieces by the base class.
@@ -363,9 +415,9 @@ class OpencodeGoEngine(BatchLlmEngine):
                 )
             return None
 
-        if not isinstance(content, str) or not content.strip():
-            if active_log:
-                active_log("⚠️ Opencode Go вернул пустой ответ", "yellow")
-            return None
-
-        return content.strip()
+        if active_log:
+            active_log(
+                f"⚠️ Opencode Go вернул пустой ответ (finish_reason={finish_reason})",
+                "yellow",
+            )
+        return None

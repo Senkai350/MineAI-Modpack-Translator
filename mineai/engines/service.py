@@ -413,6 +413,7 @@ class TranslationService:
                 retries=retries,
                 session=self._ai_http_session,
                 user_agent=self.config.get("OPENCODE", "user_agent"),
+                max_tokens=self.config.getint("AI", "max_tokens"),
             )
         return KoboldEngine(
             mode=self.ai_mode,

@@ -1221,6 +1221,14 @@ class SettingsDialog(QDialog):
         general_layout.addLayout(smart_row)
         self.ai_retries = self._spin_row(general_layout, t("settings.ai_retries"), config.getint("AI", "ai_retries", 3), 0, 5)
         self.ai_parallel = self._spin_row(general_layout, t("settings.ai_parallel"), config.getint("AI", "ai_parallel", 0), 0, 32)
+        self.ai_max_tokens = self._spin_row(
+            general_layout,
+            t("settings.ai_max_tokens"),
+            config.getint("AI", "max_tokens", 0),
+            0,
+            32768,
+            step=1024,
+        )
         self.google_workers = self._spin_row(general_layout, t("settings.google_workers"), config.getint("GENERAL", "google_workers", 5), 1, 10)
         self.deepl_key = self._line_row(general_layout, t("settings.deepl"), config.get("API", "deepl_key"), secret=True)
         general_layout.addStretch(1)
@@ -1287,10 +1295,13 @@ class SettingsDialog(QDialog):
         layout.addWidget(slider)
         return slider
 
-    def _spin_row(self, layout, label: str, value: int, minimum: int, maximum: int) -> QSpinBox:
+    def _spin_row(
+        self, layout, label: str, value: int, minimum: int, maximum: int, step: int = 1
+    ) -> QSpinBox:
         layout.addWidget(self._field_label(label))
         spin = ScrollSafeSpinBox()
         spin.setRange(minimum, maximum)
+        spin.setSingleStep(step)
         spin.setValue(value)
         layout.addWidget(spin)
         return spin
@@ -1504,6 +1515,7 @@ class SettingsDialog(QDialog):
             "gpu_layers": self.gpu_layers.value(),
             "ai_retries": self.ai_retries.value(),
             "ai_parallel": self.ai_parallel.value(),
+            "max_tokens": self.ai_max_tokens.value(),
         })
         self.config.set_many("OPENROUTER", {
             "api_key": self.or_key.text(),
